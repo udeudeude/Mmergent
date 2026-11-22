@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # A new push after Pages is enabled starts the first deployment.
 permissions:
   contents: read
   pages: write
