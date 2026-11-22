@@ -1,0 +1,92 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#080810"><title>MMERGENT | Merge Cube AR</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#080810;color:#e8f8e5;font:12px/1.5 ui-monospace,Menlo,monospace}#stage{position:fixed;inset:0;overflow:hidden}#ui{position:fixed;inset:0;pointer-events:none;padding:env(safe-area-inset-top) 15px env(safe-area-inset-bottom);display:flex;flex-direction:column;justify-content:space-between}header{padding-top:12px;text-shadow:0 1px 5px #000}h1{font-size:16px;letter-spacing:.28em;margin:0}#status{color:#d8f89b}footer{padding:16px 0 20px;background:linear-gradient(transparent,#080810 30%);pointer-events:auto}button,label.button{font:inherit;letter-spacing:.08em;border:1px solid #b3ed8c;background:#111a19;color:#e8f8e5;padding:12px;display:inline-block;margin:4px 3px 4px 0;cursor:pointer}button:disabled{opacity:.4}#setup{max-width:550px;padding:18px;background:#10131bdc;border:1px solid #6c7968;pointer-events:auto}#setup p{color:#bac6bd}a{color:#d9f89c}input[type=file]{display:none}#debug{font-size:10px;color:#b8c6bc}#mutate{display:none}</style>
+<div id="stage"></div><div id="ui"><header><h1>MMERGENT</h1><div id="status" role="status">INITIALIZING</div></header><footer><section id="setup"><strong>THE CUBE IS THE CONTROLLER</strong><p>Point the camera at a physical MERGE Cube. The first visit builds tracking data from MERGE's official paper-cube document, locally on your device. It may take a minute.</p><button id="begin">INITIALIZE TRACKING</button><label class="button" for="pdf">USE OFFICIAL PDF FILE</label><input id="pdf" type="file" accept="application/pdf"><p id="debug">Camera access requires HTTPS. Tracking patterns are not included or redistributed by this app.</p><a href="https://merge3d.ai/assets/download/paper-merge-cube.pdf" target="_blank" rel="noopener">Official paper-cube PDF</a></section><button id="mutate">MUTATE SPECIMEN</button><button id="stop" hidden>STOP CAMERA</button></footer></div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
+import {MindARThree} from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
+pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+const $=s=>document.querySelector(s),status=s=>$('#status').textContent=s,debug=s=>$('#debug').textContent=s;
+let engine=null,blobURL=null,variant=0,visible=-1,group=null,anim=null;
+const FACE_CENTERS=[[545,254],[264,534],[545,534],[825,534],[545,814],[545,1094]];
+const PAGE_W=1088,PAGE_H=1408,SQUARE=270;
+async function targetsFromPDF(data){
+ status('READING OFFICIAL DOCUMENT');
+ const pdf=await pdfjs.getDocument({data:new Uint8Array(data)}).promise;
+ const page=await pdf.getPage(1),vp=page.getViewport({scale:2});
+ const sheet=document.createElement('canvas');sheet.width=Math.round(vp.width);sheet.height=Math.round(vp.height);
+ await page.render({canvasContext:sheet.getContext('2d'),viewport:vp}).promise;
+ const images=FACE_CENTERS.map(([cx,cy])=>{
+ const side=Math.round(SQUARE*sheet.width/PAGE_W),x=Math.round(cx*sheet.width/PAGE_W-side/2),y=Math.round(cy*sheet.height/PAGE_H-side/2);
+ const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;canvas.getContext('2d').drawImage(sheet,x,y,side,side,0,0,512,512);return canvas;
+ });
+ status('COMPILING SIX TRACKING TARGETS');
+ const {Compiler}=await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js').then(m=>({Compiler:m.Compiler||m.MINDAR?.IMAGE?.Compiler})).catch(()=>({}));
+ let compiler;
+ if(Compiler)compiler=new Compiler();
+ else if(window.MINDAR?.IMAGE?.Compiler)compiler=new window.MINDAR.IMAGE.Compiler();
+ else throw Error('Target compiler unavailable from tracking library');
+ await compiler.compileImageTargets(images,p=>status('COMPILING TARGETS '+Math.round(p*100)+'%'));
+ return new Blob([await compiler.exportData()],{type:'application/octet-stream'});
+}
+async function getTargets(file){
+ const saved=localStorage.getItem('mmergent-targets-v1');
+ if(saved){const b=await fetch(saved).catch(()=>null);if(b?.ok)return await b.blob();}
+ let data;
+ if(file)data=await file.arrayBuffer();
+ else{status('FETCHING OFFICIAL CUBE DOCUMENT');const r=await fetch('https://merge3d.ai/assets/download/paper-merge-cube.pdf');if(!r.ok)throw Error('Official document unavailable');data=await r.arrayBuffer()}
+ const blob=await targetsFromPDF(data);
+ // Cache only compiled feature data, not the copyrighted source document.
+ if('caches' in window){const cache=await caches.open('mmergent-tracking-v1');await cache.put('./targets.local.mind',new Response(blob));localStorage.setItem('mmergent-targets-v1',new URL('./targets.local.mind',location.href).href)}
+ return blob;
+}
+function specimen(){
+ const root=new THREE.Group(),palette=[0x9dfc9c,0xff6d9c,0x8bafff,0xf8d27c];
+ const core=new THREE.Mesh(new THREE.IcosahedronGeometry(.34,2),new THREE.MeshPhysicalMaterial({color:palette[variant%4],wireframe:true,transparent:true,opacity:.85}));root.add(core);
+ const inner=new THREE.Mesh(new THREE.IcosahedronGeometry(.21,1),new THREE.MeshNormalMaterial({flatShading:true}));root.add(inner);
+ const tendrils=[];for(let i=0;i<30;i++){const phi=i*2.39996,theta=Math.acos(1-2*(i+.5)/30),dir=new THREE.Vector3(Math.cos(phi)*Math.sin(theta),Math.sin(phi)*Math.sin(theta),Math.cos(theta));
+ const material=new THREE.MeshBasicMaterial({color:palette[(i+variant)%4],transparent:true,opacity:.85});
+ const tube=new THREE.Mesh(new THREE.CylinderGeometry(.006,.018,.3,5),material);tube.position.copy(dir.clone().multiplyScalar(.4));tube.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);root.add(tube);tendrils.push({tube,dir,i})}
+ const ring=new THREE.Mesh(new THREE.TorusKnotGeometry(.34,.009,90,5,3,7),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.55}));root.add(ring);
+ root.userData.tick=t=>{core.rotation.set(t*.2,t*.13,t*.1);inner.rotation.set(-t*.25,t*.36,0);ring.rotation.set(t*.17,-t*.21,t*.11);tendrils.forEach(({tube,dir,i})=>{let length=.15+.24*(1+Math.sin(t*2+i*.7+variant))/2;tube.scale.y=length/.3;tube.position.copy(dir).multiplyScalar(.31+length/2)})};
+ return root;
+}
+function faceToCube(face){ // net: 2 above 1; 0 left of 1, 3 right, 4 below, 5 below 4
+ const transforms=[
+ {pos:[-.5,0,0],rot:[0,-Math.PI/2,0]},
+ {pos:[0,0,.5],rot:[0,0,0]},
+ {pos:[0,.5,0],rot:[-Math.PI/2,0,0]},
+ {pos:[.5,0,0],rot:[0,Math.PI/2,0]},
+ {pos:[0,-.5,0],rot:[Math.PI/2,0,0]},
+ {pos:[0,0,-.5],rot:[0,Math.PI,0]}];
+ return transforms[face];
+}
+async function start(file){
+ $('#begin').disabled=true;
+ try{
+ const targets=await getTargets(file);blobURL=URL.createObjectURL(targets);
+ status('STARTING CAMERA');
+ engine=new MindARThree({container:$('#stage'),imageTargetSrc:blobURL,maxTrack:1,filterMinCF:.0001,filterBeta:.01});
+ const {renderer,scene,camera}=engine;
+ scene.add(new THREE.HemisphereLight(0xffffff,0x8080ff,2));
+ const anchors=Array.from({length:6},(_,i)=>engine.addAnchor(i));
+ const specimenObject=specimen();
+ // Each face gets a transformed clone of the same specimen, anchored to that face.
+ const objects=anchors.map((a,i)=>{
+ const holder=new THREE.Group(),tr=faceToCube(i);
+ holder.position.set(...tr.pos);holder.rotation.set(...tr.rot);
+ // Move from face plane into the cube center, retaining face-specific orientation.
+ const obj=specimen();obj.position.z=-.5;holder.add(obj);a.group.add(holder);
+ a.onTargetFound=()=>{visible=i;status('TRACKING FACE '+(i+1)+' / LIVE');$('#mutate').style.display='inline-block'};
+ a.onTargetLost=()=>{if(visible===i){visible=-1;status('SEARCHING FOR CUBE')}};
+ return obj;
+ });
+ await engine.start();$('#setup').hidden=true;$('#stop').hidden=false;status('SEARCHING FOR CUBE');
+ renderer.setAnimationLoop(()=>{const t=performance.now()*.001;objects.forEach(o=>o.userData.tick(t));renderer.render(scene,camera)});
+ }catch(err){status('TRACKING NOT READY');debug(String(err?.message||err)+' | Download the official PDF above and select it using USE OFFICIAL PDF FILE.');$('#begin').disabled=false;console.error(err)}
+}
+$('#begin').onclick=()=>start();
+$('#pdf').onchange=e=>{const f=e.target.files[0];if(f)start(f)};
+$('#mutate').onclick=()=>{variant++;if(engine){const anchors=engine.anchors||[]; /* next acquisition will reflect the new specimen after restart */}status('MUTATION '+variant+' / TRACKING')};
+$('#stop').onclick=async()=>{if(engine){await engine.stop();engine=null}if(blobURL)URL.revokeObjectURL(blobURL);location.reload()};
+</script></html>
