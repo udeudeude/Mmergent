@@ -7,7 +7,7 @@ import {MindARThree} from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/minda
 import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
 const $=s=>document.querySelector(s),status=s=>$('#status').textContent=s,debug=s=>$('#debug').textContent=s;
-let engine=null,blobURL=null,variant=0,visible=-1,group=null,anim=null;
+let engine=null,blobURL=null,variant=0,visible=-1,group=null,anim=null,objectsToMutate=[];
 const FACE_CENTERS=[[545,254],[264,534],[545,534],[825,534],[545,814],[545,1094]];
 const PAGE_W=1088,PAGE_H=1408,SQUARE=270;
 async function targetsFromPDF(data){
@@ -21,23 +21,22 @@ async function targetsFromPDF(data){
  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;canvas.getContext('2d').drawImage(sheet,x,y,side,side,0,0,512,512);return canvas;
  });
  status('COMPILING SIX TRACKING TARGETS');
- const {Compiler}=await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js').then(m=>({Compiler:m.Compiler||m.MINDAR?.IMAGE?.Compiler})).catch(()=>({}));
- let compiler;
- if(Compiler)compiler=new Compiler();
- else if(window.MINDAR?.IMAGE?.Compiler)compiler=new window.MINDAR.IMAGE.Compiler();
- else throw Error('Target compiler unavailable from tracking library');
+ await new Promise((resolve,reject)=>{if(window.MINDAR?.IMAGE?.Compiler)return resolve();const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js';script.onload=resolve;script.onerror=()=>reject(Error('Could not load image target compiler'));document.head.append(script)});
+ const Compiler=window.MINDAR?.IMAGE?.Compiler;
+ if(!Compiler)throw Error('Target compiler unavailable from tracking library');
+ const compiler=new Compiler();
  await compiler.compileImageTargets(images,p=>status('COMPILING TARGETS '+Math.round(p*100)+'%'));
  return new Blob([await compiler.exportData()],{type:'application/octet-stream'});
 }
 async function getTargets(file){
- const saved=localStorage.getItem('mmergent-targets-v1');
- if(saved){const b=await fetch(saved).catch(()=>null);if(b?.ok)return await b.blob();}
+ const cached=('caches' in window)?await caches.match('./targets.local.mind'):null;
+ if(cached)return await cached.blob();
  let data;
  if(file)data=await file.arrayBuffer();
  else{status('FETCHING OFFICIAL CUBE DOCUMENT');const r=await fetch('https://merge3d.ai/assets/download/paper-merge-cube.pdf');if(!r.ok)throw Error('Official document unavailable');data=await r.arrayBuffer()}
  const blob=await targetsFromPDF(data);
  // Cache only compiled feature data, not the copyrighted source document.
- if('caches' in window){const cache=await caches.open('mmergent-tracking-v1');await cache.put('./targets.local.mind',new Response(blob));localStorage.setItem('mmergent-targets-v1',new URL('./targets.local.mind',location.href).href)}
+ if('caches' in window){const cache=await caches.open('mmergent-tracking-v1');await cache.put('./targets.local.mind',new Response(blob));}
  return blob;
 }
 function specimen(){
@@ -70,7 +69,7 @@ async function start(file){
  const {renderer,scene,camera}=engine;
  scene.add(new THREE.HemisphereLight(0xffffff,0x8080ff,2));
  const anchors=Array.from({length:6},(_,i)=>engine.addAnchor(i));
- const specimenObject=specimen();
+ 
  // Each face gets a transformed clone of the same specimen, anchored to that face.
  const objects=anchors.map((a,i)=>{
  const holder=new THREE.Group(),tr=faceToCube(i);
@@ -81,12 +80,13 @@ async function start(file){
  a.onTargetLost=()=>{if(visible===i){visible=-1;status('SEARCHING FOR CUBE')}};
  return obj;
  });
+ objectsToMutate=objects;
  await engine.start();$('#setup').hidden=true;$('#stop').hidden=false;status('SEARCHING FOR CUBE');
  renderer.setAnimationLoop(()=>{const t=performance.now()*.001;objects.forEach(o=>o.userData.tick(t));renderer.render(scene,camera)});
  }catch(err){status('TRACKING NOT READY');debug(String(err?.message||err)+' | Download the official PDF above and select it using USE OFFICIAL PDF FILE.');$('#begin').disabled=false;console.error(err)}
 }
 $('#begin').onclick=()=>start();
 $('#pdf').onchange=e=>{const f=e.target.files[0];if(f)start(f)};
-$('#mutate').onclick=()=>{variant++;if(engine){const anchors=engine.anchors||[]; /* next acquisition will reflect the new specimen after restart */}status('MUTATION '+variant+' / TRACKING')};
+$('#mutate').onclick=()=>{variant++;if(engine){objectsToMutate.forEach(o=>{o.traverse(child=>{if(child.material?.color)child.material.color.offsetHSL(.13,0,0)})});}status('MUTATION '+variant+' / TRACKING')};
 $('#stop').onclick=async()=>{if(engine){await engine.stop();engine=null}if(blobURL)URL.revokeObjectURL(blobURL);location.reload()};
 </script></html>
