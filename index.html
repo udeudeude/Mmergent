@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090914"><title>MMERGENT | impossible specimen</title>
+<style>
+:root{color-scheme:dark;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#090914;color:#e6e4f1}*{box-sizing:border-box}body{margin:0;overflow:hidden}canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none}header{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top) + 16px) 18px 10px;display:flex;justify-content:space-between;align-items:start;pointer-events:none}h1{font-size:15px;letter-spacing:.35em;margin:0}small{font-size:10px;color:#a5a0bd;letter-spacing:.15em}#panel{position:fixed;bottom:0;left:0;right:0;padding:15px 16px calc(env(safe-area-inset-bottom) + 17px);background:linear-gradient(transparent,#090914 24%);display:flex;flex-wrap:wrap;align-items:center;gap:8px}button{border:1px solid #6b637f;background:#171527;color:#f2eefa;border-radius:4px;padding:12px 13px;font:inherit;font-size:11px;letter-spacing:.09em;cursor:pointer}button[aria-pressed=true]{border-color:#e0ff83;color:#e0ff83}button:focus-visible{outline:2px solid #e0ff83}#readout{flex:1;min-width:155px;font-size:10px;color:#bbb5d1;line-height:1.6}#hint{position:fixed;top:90px;left:18px;font-size:11px;line-height:1.7;color:#aaa5c2;pointer-events:none}#video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;opacity:.24;display:none;transform:scaleX(-1)}#notice{position:fixed;top:46%;width:100%;text-align:center;pointer-events:none;font-size:12px;color:#e0ff83;opacity:0;transition:opacity .3s}
+</style>
+<video id="video" autoplay playsinline muted></video><canvas id="scene" aria-label="Interactive impossible cube specimen"></canvas>
+<header><div><h1>MMERGENT</h1><small>AN IMPOSSIBLE SPECIMEN / 001</small></div><small id="fps">LIVE</small></header>
+<div id="hint">DRAG TO TURN THE SPECIMEN<br>TAP A FACE TO MUTATE IT<br>PINCH TO CHANGE SCALE</div><div id="notice" role="status"></div>
+<div id="panel"><div id="readout">SPECIMEN: 000001<br>STATE: UNSTABLE</div><button id="mutate">MUTATE</button><button id="motion" aria-pressed="false">TILT</button><button id="camera" aria-pressed="false">CAMERA</button><button id="sound" aria-pressed="false">SOUND</button><button id="reset">RESET</button></div>
+<script>
+'use strict';
+const c=document.querySelector('#scene'),ctx=c.getContext('2d'),readout=document.querySelector('#readout'),notice=document.querySelector('#notice');
+let W=0,H=0,dpr=1,rx=-.34,ry=.58,zoom=1,phase=0,seed=1,mutation=0,tilt=false,sound=false,audio=null,stream=null,active=new Map(),lastDist=0,lastX=0,lastY=0,dragged=false,faceRegions=[];
+const palettes=[['#c8ff82','#5e8aef','#ff79bf'],['#ffca72','#ff5e8a','#8c9fff'],['#6ef7d7','#e6a3ff','#ffdc76'],['#f1f0e9','#ff6049','#6d85ff']];
+const rand=(n)=>{let x=Math.sin(n*127.1+seed*311.7)*43758.5453;return x-Math.floor(x)};
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*dpr;c.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+function rotate(p){let [x,y,z]=p,cy=Math.cos(ry),sy=Math.sin(ry),cx=Math.cos(rx),sx=Math.sin(rx);let a=x*cy+z*sy,b=-x*sy+z*cy;return [a,y*cx-b*sx,y*sx+b*cx]}
+function project(p){let [x,y,z]=rotate(p),pers=4.8/(4.8-z),scale=Math.min(W,H)*.28*zoom;return {x:W/2+x*scale*pers,y:H*.45-y*scale*pers,z,scale:scale*pers}}
+function line(a,b,color,width=1){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+const verts=[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+const faces=[[4,5,6,7],[1,0,3,2],[0,4,7,3],[5,1,2,6],[3,7,6,2],[0,1,5,4]];
+function polygon(points,fill,stroke){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.stroke()}
+function onFace(face,u,v){const a=verts[face[0]],b=verts[face[1]],d=verts[face[3]];return a.map((n,i)=>n+(b[i]-n)*u+(d[i]-n)*v)}
+function frame(t){phase=t*.001;ctx.clearRect(0,0,W,H);ctx.fillStyle='#090914';ctx.fillRect(0,0,W,H);
+const col=palettes[mutation%palettes.length];const center=project([0,0,0]);
+let glow=ctx.createRadialGradient(center.x,center.y,10,center.x,center.y,Math.min(W,H)*.65);glow.addColorStop(0,'#25203c');glow.addColorStop(1,'#090914');ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);
+for(let i=0;i<80;i++){let x=rand(i+30)*W,y=rand(i+300)*H;ctx.fillStyle='rgba(194,185,225,'+(.07+rand(i+500)*.18)+')';ctx.fillRect(x,y,1,1)}
+let sorted=faces.map((f,id)=>({f,id,depth:f.reduce((s,v)=>s+rotate(verts[v])[2],0)/4})).sort((a,b)=>a.depth-b.depth);faceRegions=[];
+for(const {f,id,depth} of sorted){const corners=f.map(i=>project(verts[i]));const visible=depth>0;polygon(corners,visible?'rgba(23,20,42,.85)':'rgba(15,14,29,.8)',visible?col[id%3]+'99':'#39324d');if(!visible)continue;
+faceRegions.push({id,corners});const n=8;
+for(let i=0;i<=n;i++){let a=i/n;line(project(onFace(f,a,0)),project(onFace(f,a,1)),col[id%3]+'25');line(project(onFace(f,0,a)),project(onFace(f,1,a)),col[id%3]+'25')}
+const mode=(id+mutation)%6;
+for(let k=0;k<28;k++){let u=rand(id*200+k*3),v=rand(id*200+k*3+1),wave=phase*(.3+rand(id*10+k)*.8),p=onFace(f,u,v),height=(Math.sin(wave+k*.9)+1)*.17;
+if(mode===0)height*=1.9;else if(mode===1)height=rand(k+id*8)*.4;else if(mode===2)height=.04;else if(mode===3)height=Math.sin(wave*2+u*14+v*14)*.28;else if(mode===4)height=(u+v)*.22;else height=Math.abs(Math.sin(wave+k))* .5;
+let normal=[0,0,0];let aa=verts[f[0]],bb=verts[f[1]],dd=verts[f[3]];let ab=bb.map((n,i)=>n-aa[i]),ad=dd.map((n,i)=>n-aa[i]);normal=[ab[1]*ad[2]-ab[2]*ad[1],ab[2]*ad[0]-ab[0]*ad[2],ab[0]*ad[1]-ab[1]*ad[0]];let len=Math.hypot(...normal);normal=normal.map(n=>n/len);let q=p.map((n,i)=>n+normal[i]*height);
+let A=project(p),B=project(q);line(A,B,col[(id+k)%3]+'a0',1.1);ctx.fillStyle=col[(id+k)%3];ctx.beginPath();ctx.arc(B.x,B.y,1.5+height*2,0,Math.PI*2);ctx.fill()}
+let mid=project(onFace(f,.5,.5));ctx.fillStyle='#f0ecff';ctx.font='10px monospace';ctx.textAlign='center';ctx.fillText(['MEMORY','TEETH','WEATHER','HUNGER','DREAM','ERROR'][(id+mutation)%6],mid.x,mid.y)}
+ctx.textAlign='left';ctx.strokeStyle='#8d83ad66';ctx.beginPath();ctx.moveTo(18,H*.67);ctx.lineTo(18,H*.67+28);ctx.lineTo(105,H*.67+28);ctx.stroke();ctx.fillStyle='#aaa4c4';ctx.font='10px monospace';ctx.fillText('OBJECT DOES NOT CONSENT TO GEOMETRY',18,H*.67+44);
+requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+function ping(){if(!sound)return;try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume();let o=audio.createOscillator(),g=audio.createGain();o.type='sine';o.frequency.setValueAtTime(90+rand(mutation)*800,audio.currentTime);o.frequency.exponentialRampToValueAtTime(55,audio.currentTime+.35);g.gain.setValueAtTime(.07,audio.currentTime);g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.4);o.connect(g).connect(audio.destination);o.start();o.stop(audio.currentTime+.42)}catch(e){}}
+function mutate(){mutation++;seed++;readout.innerHTML='SPECIMEN: '+String(seed).padStart(6,'0')+'<br>STATE: '+['UNSTABLE','FERAL','RECURSIVE','SENTIENT?','LEAKING','UNFINISHED'][mutation%6];ping()}
+document.querySelector('#mutate').onclick=mutate;
+document.querySelector('#reset').onclick=()=>{rx=-.34;ry=.58;zoom=1;mutation=0;seed=1;readout.innerHTML='SPECIMEN: 000001<br>STATE: UNSTABLE';ping()};
+document.querySelector('#sound').onclick=e=>{sound=!sound;e.currentTarget.setAttribute('aria-pressed',sound);if(sound)ping()};
+document.querySelector('#motion').onclick=async e=>{if(!tilt&&typeof DeviceOrientationEvent!=='undefined'){try{if(typeof DeviceOrientationEvent.requestPermission==='function'&&await DeviceOrientationEvent.requestPermission()!=='granted')return}catch(err){return}}tilt=!tilt;e.currentTarget.setAttribute('aria-pressed',tilt)};
+addEventListener('deviceorientation',e=>{if(tilt&&e.beta!=null&&e.gamma!=null){rx=Math.max(-1.4,Math.min(1.4,e.beta*Math.PI/180*.7));ry=e.gamma*Math.PI/180*.9}});
+document.querySelector('#camera').onclick=async e=>{let video=document.querySelector('#video');if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;video.style.display='none';e.currentTarget.setAttribute('aria-pressed',false);return}try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});video.srcObject=stream;video.style.display='block';e.currentTarget.setAttribute('aria-pressed',true)}catch(err){notice.textContent='CAMERA UNAVAILABLE / CHECK PERMISSION';notice.style.opacity=1;setTimeout(()=>notice.style.opacity=0,2500)}};
+function inside(p,poly){let yes=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){let a=poly[i],b=poly[j];if((a.y>p.y)!==(b.y>p.y)&&p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x)yes=!yes}return yes}
+c.addEventListener('pointerdown',e=>{c.setPointerCapture(e.pointerId);active.set(e.pointerId,{x:e.clientX,y:e.clientY});lastX=e.clientX;lastY=e.clientY;dragged=false});
+c.addEventListener('pointermove',e=>{if(!active.has(e.pointerId))return;let p=active.get(e.pointerId),dx=e.clientX-p.x,dy=e.clientY-p.y;if(Math.abs(dx)+Math.abs(dy)>4)dragged=true;active.set(e.pointerId,{x:e.clientX,y:e.clientY});if(active.size===1&&!tilt){ry+=dx*.009;rx=Math.max(-1.5,Math.min(1.5,rx+dy*.009))}else if(active.size===2){let ps=[...active.values()],dist=Math.hypot(ps[0].x-ps[1].x,ps[0].y-ps[1].y);if(lastDist)zoom=Math.max(.55,Math.min(2.5,zoom*dist/lastDist));lastDist=dist}});
+c.addEventListener('pointerup',e=>{if(!dragged&&active.size===1){let p={x:e.clientX,y:e.clientY};for(let i=faceRegions.length-1;i>=0;i--)if(inside(p,faceRegions[i].corners)){mutate();break}}active.delete(e.pointerId);if(active.size<2)lastDist=0});
+c.addEventListener('pointercancel',e=>{active.delete(e.pointerId);lastDist=0});
+addEventListener('keydown',e=>{if(e.key===' '){e.preventDefault();mutate()}if(e.key==='ArrowLeft')ry-=.15;if(e.key==='ArrowRight')ry+=.15;if(e.key==='ArrowUp')rx-=.15;if(e.key==='ArrowDown')rx+=.15});
+</script></html>
