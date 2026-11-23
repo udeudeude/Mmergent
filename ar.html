@@ -1,15 +1,17 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#080810"><title>MMERGENT | Merge Cube AR</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#080810;color:#e8f8e5;font:12px/1.5 ui-monospace,Menlo,monospace}#stage{position:fixed;inset:0;overflow:hidden}#ui{position:fixed;inset:0;pointer-events:none;padding:env(safe-area-inset-top) 15px env(safe-area-inset-bottom);display:flex;flex-direction:column;justify-content:space-between}header{padding-top:12px;text-shadow:0 1px 5px #000}h1{font-size:16px;letter-spacing:.28em;margin:0}#status{color:#d8f89b}footer{padding:16px 0 20px;background:linear-gradient(transparent,#080810 30%);pointer-events:auto}button,label.button{font:inherit;letter-spacing:.08em;border:1px solid #b3ed8c;background:#111a19;color:#e8f8e5;padding:12px;display:inline-block;margin:4px 3px 4px 0;cursor:pointer}button:disabled{opacity:.4}#setup{max-width:550px;padding:18px;background:#10131bdc;border:1px solid #6c7968;pointer-events:auto}#setup p{color:#bac6bd}a{color:#d9f89c}input[type=file]{display:none}#debug{font-size:10px;color:#b8c6bc}#mutate{display:none}</style>
-<div id="stage"></div><div id="ui"><header><h1>MMERGENT</h1><div id="status" role="status">INITIALIZING</div></header><footer><section id="setup"><strong>THE CUBE IS THE CONTROLLER</strong><p>Point the camera at a physical MERGE Cube. The first visit builds tracking data from MERGE's official paper-cube document, locally on your device. It may take a minute.</p><button id="begin">INITIALIZE TRACKING</button><label class="button" for="pdf">USE OFFICIAL PDF FILE</label><input id="pdf" type="file" accept="application/pdf"><p id="debug">Camera access requires HTTPS. Tracking patterns are not included or redistributed by this app.</p><a href="https://merge3d.ai/assets/download/paper-merge-cube.pdf" target="_blank" rel="noopener">Official paper-cube PDF</a></section><button id="mutate">MUTATE SPECIMEN</button><button id="stop" hidden>STOP CAMERA</button></footer></div>
+<style>*{box-sizing:border-box}body{margin:0;background:#080810;color:#e8f8e5;font:12px/1.5 ui-monospace,Menlo,monospace}#stage{position:fixed;inset:0;overflow:hidden}#ui{position:fixed;inset:0;pointer-events:none;padding:env(safe-area-inset-top) 15px env(safe-area-inset-bottom);display:flex;flex-direction:column;justify-content:space-between}header{padding-top:12px;text-shadow:0 1px 5px #000}h1{font-size:16px;letter-spacing:.28em;margin:0}#status{color:#d8f89b}footer{padding:16px 0 20px;background:linear-gradient(transparent,#080810 30%);pointer-events:auto}button,label.button{font:inherit;letter-spacing:.08em;border:1px solid #b3ed8c;background:#111a19;color:#e8f8e5;padding:12px;display:inline-block;margin:4px 3px 4px 0;cursor:pointer}button:disabled{opacity:.4}[hidden]{display:none!important}#setup{max-width:550px;padding:18px;background:#10131bdc;border:1px solid #6c7968;pointer-events:auto}#setup p{color:#bac6bd}a{color:#d9f89c}input[type=file]{display:none}#debug{font-size:10px;color:#b8c6bc}#mutate{display:none}</style>
+<div id="stage"></div><div id="ui"><header><h1>MMERGENT</h1><div id="status" role="status">READY TO INITIALIZE</div></header><footer><section id="setup"><strong>THE CUBE IS THE CONTROLLER</strong><p>Point the camera at a physical MERGE Cube. The first visit builds tracking data from MERGE's official paper-cube document, locally on your device. It may take a minute.</p><button id="begin">INITIALIZE TRACKING</button><label class="button" for="pdf">USE OFFICIAL PDF FILE</label><input id="pdf" type="file" accept="application/pdf"><p id="debug">Camera access requires HTTPS. Tracking patterns are not included or redistributed by this app.</p><a href="https://merge3d.ai/assets/download/paper-merge-cube.pdf" target="_blank" rel="noopener">Official paper-cube PDF</a></section><button id="mutate">MUTATE SPECIMEN</button><button id="stop" hidden>STOP CAMERA</button></footer></div>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
-import {MindARThree} from 'https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js';
+const loadScript=src=>new Promise((resolve,reject)=>{const el=document.createElement('script');el.src=src;el.onload=resolve;el.onerror=()=>reject(new Error('Unable to load '+src));document.head.append(el)});
+let MindARThree;
 import * as pdfjs from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
 pdfjs.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
 const $=s=>document.querySelector(s),status=s=>$('#status').textContent=s,debug=s=>$('#debug').textContent=s;
 let engine=null,blobURL=null,variant=0,visible=-1,group=null,anim=null,objectsToMutate=[];
 const FACE_CENTERS=[[545,254],[264,534],[545,534],[825,534],[545,814],[545,1094]];
 const PAGE_W=1088,PAGE_H=1408,SQUARE=270;
+window.addEventListener('error',e=>{status('APPLICATION ERROR');debug(e.message||'Script error')});window.addEventListener('unhandledrejection',e=>{status('APPLICATION ERROR');debug(String(e.reason?.message||e.reason))});
 async function targetsFromPDF(data){
  status('READING OFFICIAL DOCUMENT');
  const pdf=await pdfjs.getDocument({data:new Uint8Array(data)}).promise;
@@ -21,7 +23,7 @@ async function targetsFromPDF(data){
  const canvas=document.createElement('canvas');canvas.width=512;canvas.height=512;canvas.getContext('2d').drawImage(sheet,x,y,side,side,0,0,512,512);return canvas;
  });
  status('COMPILING SIX TRACKING TARGETS');
- await new Promise((resolve,reject)=>{if(window.MINDAR?.IMAGE?.Compiler)return resolve();const script=document.createElement('script');script.src='https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js';script.onload=resolve;script.onerror=()=>reject(Error('Could not load image target compiler'));document.head.append(script)});
+ if(!window.MINDAR?.IMAGE?.Compiler)await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js');
  const Compiler=window.MINDAR?.IMAGE?.Compiler;
  if(!Compiler)throw Error('Target compiler unavailable from tracking library');
  const compiler=new Compiler();
@@ -62,7 +64,10 @@ function faceToCube(face){ // net: 2 above 1; 0 left of 1, 3 right, 4 below, 5 b
 }
 async function start(file){
  $('#begin').disabled=true;
+ status('LOADING TRACKING ENGINE');
+ debug('Loading recognition libraries. Progress and errors appear here.');
  try{
+ if(!MindARThree){await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js');MindARThree=window.MINDAR?.IMAGE?.MindARThree;if(!MindARThree)throw new Error('MindAR camera engine failed to initialize')}
  const targets=await getTargets(file);blobURL=URL.createObjectURL(targets);
  status('STARTING CAMERA');
  engine=new MindARThree({container:$('#stage'),imageTargetSrc:blobURL,maxTrack:1,filterMinCF:.0001,filterBeta:.01});
@@ -83,7 +88,7 @@ async function start(file){
  objectsToMutate=objects;
  await engine.start();$('#setup').hidden=true;$('#stop').hidden=false;status('SEARCHING FOR CUBE');
  renderer.setAnimationLoop(()=>{const t=performance.now()*.001;objects.forEach(o=>o.userData.tick(t));renderer.render(scene,camera)});
- }catch(err){status('TRACKING NOT READY');debug(String(err?.message||err)+' | Download the official PDF above and select it using USE OFFICIAL PDF FILE.');$('#begin').disabled=false;console.error(err)}
+ }catch(err){status('TRACKING NOT READY');debug('ERROR: '+String(err?.message||err)+'. If fetching the document failed, download the official PDF and select USE OFFICIAL PDF FILE.');$('#begin').disabled=false;console.error(err)}
 }
 $('#begin').onclick=()=>start();
 $('#pdf').onchange=e=>{const f=e.target.files[0];if(f)start(f)};
